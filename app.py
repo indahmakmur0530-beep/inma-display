@@ -38,7 +38,6 @@ def article_candidates(name):
         if len(a)>=4: out.append(a)
     return list(dict.fromkeys(out))
 
-@st.cache_data
 def load_stock(path):
     raw=pd.read_excel(path, header=None)
     header=None
