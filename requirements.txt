@@ -1,0 +1,6 @@
+streamlit>=1.38
+pandas>=2.0
+openpyxl>=3.1
+Pillow>=10.0
+google-api-python-client>=2.140
+google-auth>=2.30
