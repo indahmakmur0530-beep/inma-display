@@ -48,7 +48,7 @@ def load_stock(path):
     df=pd.read_excel(path, header=header)
     df.columns=[str(c).strip() for c in df.columns]
     name_col=next(c for c in df.columns if c.lower()=='nama barang')
-    stock_col=next(c for c in df.columns if c.lower()=='stock')
+    stock_col=next(c for c in df.columns if c.lower() in {'stok','stock'})
     size_col=next((c for c in df.columns if 'ukuran' in c.lower()),None)
     df=df[df[name_col].notna()].copy()
     df['Nama']=df[name_col].astype(str).str.strip()
