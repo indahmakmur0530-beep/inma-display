@@ -60,27 +60,60 @@ def load_stock(path):
 
 @st.cache_data(ttl=900, show_spinner=False)
 def drive_index():
-    # Optional Google service-account connection. Without credentials the app still works for stock/search.
+    # Koneksi Google Drive menggunakan service account
     try:
         from google.oauth2.service_account import Credentials
         from googleapiclient.discovery import build
-        info=dict(st.secrets['gcp_service_account'])
-        creds=Credentials.from_service_account_info(info,scopes=['https://www.googleapis.com/auth/drive.readonly'])
-        svc=build('drive','v3',credentials=creds,cache_discovery=False)
-        rows=[]
-        for brand,fid in FOLDER_IDS.items():
-            token=None
+
+        info = dict(st.secrets['gcp_service_account'])
+
+        creds = Credentials.from_service_account_info(
+            info,
+            scopes=['https://www.googleapis.com/auth/drive.readonly']
+        )
+
+        svc = build(
+            'drive',
+            'v3',
+            credentials=creds,
+            cache_discovery=False
+        )
+
+        rows = []
+
+        for brand, fid in FOLDER_IDS.items():
+            token = None
+
             while True:
-                res=svc.files().list(q=f"'{fid}' in parents and trashed=false",fields='nextPageToken,files(id,name,mimeType)',pageSize=1000,pageToken=token).execute()
-                for f in res.get('files',[]):
-                    if f.get('mimeType','').startswith('image/'):
-                        rows.append({'brand':brand,'id':f['id'],'name':f['name'],'norm':norm(f['name'])})
-                token=res.get('nextPageToken')
-                if not token: break
+                res = svc.files().list(
+                    q=f"'{fid}' in parents and trashed=false",
+                    fields='nextPageToken,files(id,name,mimeType)',
+                    pageSize=1000,
+                    pageToken=token
+                ).execute()
+
+                for f in res.get('files', []):
+                    if f.get('mimeType', '').startswith('image/'):
+                        rows.append({
+                            'brand': brand,
+                            'id': f['id'],
+                            'name': f['name'],
+                            'norm': norm(f['name'])
+                        })
+
+                token = res.get('nextPageToken')
+
+                if not token:
+                    break
+
         return rows
-           except Exception as e:
-        st.error(f"ERROR GOOGLE DRIVE: {type(e).__name__}: {e}")
+
+    except Exception as e:
+        st.error(
+            f"ERROR GOOGLE DRIVE: {type(e).__name__}: {e}"
+        )
         return []
+     
 @st.cache_data(ttl=900, show_spinner=False)
 def drive_image(file_id):
     try:
