@@ -78,7 +78,7 @@ def drive_index():
                 token=res.get('nextPageToken')
                 if not token: break
         return rows
-       except Exception as e:
+           except Exception as e:
         st.error(f"ERROR GOOGLE DRIVE: {type(e).__name__}: {e}")
         return []
 @st.cache_data(ttl=900, show_spinner=False)
