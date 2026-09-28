@@ -142,14 +142,45 @@ except Exception as e:
 
 idx=drive_index()
 brands=['Semua']+sorted([x for x in df['Merek'].unique() if x!='LAINNYA'])+(['LAINNYA'] if 'LAINNYA' in set(df['Merek']) else [])
-c1,c2=st.columns([1,1])
-with c1: selected=st.selectbox('Merek',brands)
-with c2: q=st.text_input('Cari artikel',placeholder='Contoh: 650DLB')
 
+c1, c2, c3 = st.columns([1, 1, 1])
+
+with c1:
+    selected = st.selectbox('Merek', brands)
+
+with c2:
+    q = st.text_input(
+        'Cari artikel',
+        placeholder='Contoh: 650DLB'
+    )
+
+with c3:
+    urutan = st.selectbox(
+        'Urutkan',
+        [
+            'Stok terbanyak',
+            'Stok paling sedikit',
+            'Nama A-Z'
+        ]
+    )
 view=df.copy()
 if selected!='Semua': view=view[view['Merek']==selected]
 if q: view=view[view['Nama'].str.contains(q,case=False,na=False,regex=False)]
-view=view.sort_values(['Stok','Nama'],ascending=[False,True])
+if urutan == 'Stok terbanyak':
+    view = view.sort_values(
+        ['Stok', 'Nama'],
+        ascending=[False, True]
+    )
+elif urutan == 'Stok paling sedikit':
+    view = view.sort_values(
+        ['Stok', 'Nama'],
+        ascending=[True, True]
+    )
+else:
+    view = view.sort_values(
+        'Nama',
+        ascending=True
+    )
 st.subheader(f'{len(view):,} barang')
 if not idx: st.info('Foto Drive belum aktif pada deployment ini. Tambahkan Google Drive service-account di Streamlit Secrets; stok dan pencarian tetap dapat digunakan.')
 
