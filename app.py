@@ -97,8 +97,15 @@ def load_stock(path):
         raise ValueError('Header Kode Barang tidak ditemukan')
     df = pd.read_excel(path, header=header)
     df.columns = [str(c).strip() for c in df.columns]
-    name_col = next(c for c in df.columns if c.lower() == 'nama barang')
-    stock_col = next(c for c in df.columns if c.lower() == 'stock')
+    # POS exports seen in InMa use Indonesian `Stok`; older files may use `Stock`.
+    # Accept both so a routine stock export does not break the app.
+    colmap = {str(c).strip().lower(): c for c in df.columns}
+    if 'nama barang' not in colmap:
+        raise ValueError(f"Kolom Nama Barang tidak ditemukan. Kolom terbaca: {list(df.columns)}")
+    name_col = colmap['nama barang']
+    stock_col = colmap.get('stok') or colmap.get('stock')
+    if stock_col is None:
+        raise ValueError(f"Kolom Stok/Stock tidak ditemukan. Kolom terbaca: {list(df.columns)}")
     size_col = next((c for c in df.columns if 'ukuran' in c.lower()), None)
     price_col = next((c for c in df.columns if c.lower() in {'harga jual 1','harga jual1','harga jual','harga'}), None)
     df = df[df[name_col].notna()].copy()
