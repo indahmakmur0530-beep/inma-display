@@ -357,7 +357,7 @@ except Exception as e:
     st.stop()
 
 st.sidebar.title('InMa')
-page = st.sidebar.radio('Menu', ['📦 Display Stock', '📷 Ajarkan Barang'])
+page = st.sidebar.radio('Menu', ['📦 Display Stock', '📷 Tanya AI', '🎓 Ajarkan Barang'])
 
 if page == '📦 Display Stock':
     st.title('InMa • Cek Barang Display')
@@ -421,7 +421,64 @@ if page == '📦 Display Stock':
                 if imgbytes:
                     st.download_button('Simpan foto', data=imgbytes, file_name=norm(r['Nama']) + '.jpg', mime='image/jpeg', width='stretch')
 
+
 else:
+    st.title('InMa • Tanya AI')
+    st.caption('Foto barang → AI mencari artikel → Harga Jual 1 dan stok dibaca dari data POS')
+    st.info('AI hanya membantu mengenali artikel. Harga dan stok tidak ditebak AI.')
+
+    if 'OPENAI_API_KEY' not in st.secrets:
+        st.error('OPENAI_API_KEY belum ada di Streamlit Secrets.')
+        st.stop()
+
+    try:
+        products = load_products()
+    except Exception as e:
+        st.error(f'Gagal membaca database produk Google Sheets: {e}')
+        st.stop()
+
+    available_brands = sorted(set(products['brand_canon'].dropna()) & set(FOLDER_IDS.keys()))
+    staff = st.text_input('Nama staf', placeholder='Contoh: Dodi', key='ask_staff')
+    brand = st.selectbox('Pilih merek', available_brands, key='ask_brand')
+    photo = st.camera_input('Foto barang yang ingin dikenali', resolution='720p', key='ask_camera')
+
+    if photo and brand:
+        image_bytes = photo.getvalue()
+        df_brand = products[products['brand_canon'] == brand].copy()
+        article_list = [str(x) for x in df_brand['artikel'].dropna().unique() if str(x).strip()]
+        if st.button('Tanya AI: ini artikel apa?', type='primary', width='stretch'):
+            if not staff.strip():
+                st.warning('Isi nama staf terlebih dahulu.')
+            else:
+                with st.spinner('AI membaca foto dan mencari artikel...'):
+                    try:
+                        ai = analyze_photo(image_bytes, brand, article_list)
+                        ranked = rank_candidates(df_brand, ai)
+                        st.session_state['ask_ai_result'] = ai
+                        st.session_state['ask_ranked'] = [(r.to_dict(), sc) for r, sc in ranked]
+                        st.session_state['ask_brand_saved'] = brand
+                    except Exception as e:
+                        st.error(f'Identifikasi gagal: {e}')
+
+    if st.session_state.get('ask_ranked') and st.session_state.get('ask_brand_saved') == brand:
+        ai = st.session_state.get('ask_ai_result', {})
+        ranked = st.session_state['ask_ranked']
+        st.subheader('Hasil AI')
+        st.caption(f"Keyakinan AI: {ai.get('confidence', 0)}%")
+        for no, (r, score) in enumerate(ranked, 1):
+            sm = stock_match(r.get('artikel', ''), brand, df)
+            nama = sm['Nama'] if sm is not None else str(r.get('artikel', ''))
+            with st.container(border=True):
+                st.markdown(f'### {no}. {nama}')
+                st.markdown(f'**Artikel: {r.get("artikel", "-")}**')
+                if sm is not None:
+                    st.markdown(f'**Harga Jual 1: {rupiah(sm["HargaJual1"])}**')
+                    st.markdown(f'**Stok: {sm["Stok"]:g} pasang**')
+                else:
+                    st.warning('Belum cocok dengan data POS harga/stok.')
+                st.caption(f'Kecocokan kandidat: {score:.0f}%')
+
+elif page == '🎓 Ajarkan Barang':
     st.title('InMa • Ajarkan Barang')
     st.caption('Foto barang asli → staf memilih artikel yang BENAR → foto disimpan sebagai contoh artikel tersebut')
     st.info('Mode ini tidak menebak artikel. Label berasal dari staf. Foto yang disimpan akan menjadi data contoh untuk sistem pengenalan barang berikutnya.')
