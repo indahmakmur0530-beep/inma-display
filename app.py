@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from PIL import Image
 
 st.set_page_config(page_title='InMa Display Stock', page_icon='👟', layout='wide')
@@ -97,26 +98,78 @@ def load_stock(path):
         raise ValueError('Header Kode Barang tidak ditemukan')
     df = pd.read_excel(path, header=header)
     df.columns = [str(c).strip() for c in df.columns]
-    # POS exports seen in InMa use Indonesian `Stok`; older files may use `Stock`.
-    # Accept both so a routine stock export does not break the app.
     colmap = {str(c).strip().lower(): c for c in df.columns}
-    if 'nama barang' not in colmap:
-        raise ValueError(f"Kolom Nama Barang tidak ditemukan. Kolom terbaca: {list(df.columns)}")
+    if 'kode barang' not in colmap or 'nama barang' not in colmap:
+        raise ValueError(f"Kolom Kode Barang/Nama Barang tidak ditemukan. Kolom terbaca: {list(df.columns)}")
+    code_col = colmap['kode barang']
     name_col = colmap['nama barang']
     stock_col = colmap.get('stok') or colmap.get('stock')
     if stock_col is None:
         raise ValueError(f"Kolom Stok/Stock tidak ditemukan. Kolom terbaca: {list(df.columns)}")
     size_col = next((c for c in df.columns if 'ukuran' in c.lower()), None)
-    price_col = next((c for c in df.columns if c.lower() in {'harga jual 1','harga jual1','harga jual','harga'}), None)
     df = df[df[name_col].notna()].copy()
+    df['KodeBarang'] = df[code_col].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.zfill(7)
     df['Nama'] = df[name_col].astype(str).str.strip()
     df['Stok'] = pd.to_numeric(df[stock_col], errors='coerce').fillna(0)
     df = df[df['Stok'] > 0].copy()
     df['Merek'] = df['Nama'].map(parse_brand)
     df['Ukuran'] = df[size_col].astype(str) if size_col else ''
-    df['HargaJual1'] = df[price_col] if price_col else ''
     df['NamaNorm'] = df['Nama'].map(norm)
     return df
+
+
+@st.cache_data
+def load_prices(path):
+    df = pd.read_excel(path, dtype={'Kode Barang': str})
+    df.columns = [str(c).strip() for c in df.columns]
+    colmap = {str(c).strip().lower(): c for c in df.columns}
+    code_col = colmap.get('kode barang')
+    price_col = colmap.get('harga jual1') or colmap.get('harga jual 1')
+    if code_col is None or price_col is None:
+        raise ValueError(f"Kolom Kode Barang/Harga Jual1 tidak ditemukan. Kolom terbaca: {list(df.columns)}")
+    out = df[[code_col, price_col]].copy()
+    out.columns = ['KodeBarang', 'HargaJual1']
+    out['KodeBarang'] = out['KodeBarang'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.zfill(7)
+    out['HargaJual1'] = pd.to_numeric(out['HargaJual1'], errors='coerce')
+    out = out.dropna(subset=['KodeBarang']).drop_duplicates('KodeBarang', keep='last')
+    return out
+
+
+def share_product_button(image_bytes, filename, message, key):
+    """Mobile Web Share: share the actual image file plus text to WhatsApp/other apps."""
+    if not image_bytes:
+        return
+    b64 = base64.b64encode(image_bytes).decode('ascii')
+    safe_message = json.dumps(message)
+    safe_filename = json.dumps(filename)
+    html = f"""
+    <button id="share-{key}" style="width:100%;padding:0.65rem 1rem;border:1px solid #d0d0d0;border-radius:0.5rem;background:white;font-size:16px;cursor:pointer;">
+      Bagikan foto + harga
+    </button>
+    <div id="status-{key}" style="font:13px sans-serif;margin-top:6px;color:#666;"></div>
+    <script>
+    const btn = document.getElementById('share-{key}');
+    const status = document.getElementById('status-{key}');
+    btn.onclick = async () => {{
+      try {{
+        const binary = atob('{b64}');
+        const bytes = new Uint8Array(binary.length);
+        for (let i=0; i<binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const file = new File([bytes], {safe_filename}, {{type:'image/jpeg'}});
+        const data = {{text: {safe_message}, files:[file]}};
+        if (navigator.share && (!navigator.canShare || navigator.canShare(data))) {{
+          await navigator.share(data);
+          status.textContent = '';
+        }} else {{
+          status.textContent = 'Browser ini belum mendukung berbagi foto langsung. Gunakan tombol Simpan foto.';
+        }}
+      }} catch (e) {{
+        if (e.name !== 'AbortError') status.textContent = 'Gagal membuka menu bagikan: ' + e.message;
+      }}
+    }};
+    </script>
+    """
+    components.html(html, height=62)
 
 
 @st.cache_resource
@@ -294,10 +347,13 @@ def clear_camera_state():
 
 
 stock_path = Path(__file__).with_name('stock.xlsx')
+price_path = Path(__file__).with_name('harga.xlsx')
 try:
     df = load_stock(stock_path)
+    prices = load_prices(price_path)
+    df = df.merge(prices, on='KodeBarang', how='left')
 except Exception as e:
-    st.error(f'Gagal membaca stock.xlsx: {e}')
+    st.error(f'Gagal membaca stock.xlsx / harga.xlsx: {e}')
     st.stop()
 
 st.sidebar.title('InMa')
@@ -333,7 +389,7 @@ if page == '📦 Display Stock':
                 imgbytes = drive_image(photo['id']) if photo else None
                 if imgbytes:
                     try:
-                        st.image(Image.open(io.BytesIO(imgbytes)), use_container_width=True)
+                        st.image(Image.open(io.BytesIO(imgbytes)), width='stretch')
                     except Exception:
                         st.caption('Foto tidak dapat dibuka')
                 else:
@@ -344,10 +400,26 @@ if page == '📦 Display Stock':
                 st.markdown(f'**Stok: {stok_text} pasang**')
                 if str(r['Ukuran']).strip() not in {'','nan','None'}:
                     st.caption(f"Ukuran: {r['Ukuran']}")
-                msg = f"{r['Nama']}\nStok: {r['Stok']:g} pasang\nCek barang ini untuk display."
-                st.link_button('Kirim ke WhatsApp', 'https://wa.me/?text=' + urllib.parse.quote(msg), use_container_width=True)
+                harga = r.get('HargaJual1', '')
+                if pd.notna(harga):
+                    st.markdown(f"**Harga Jual 1: {rupiah(harga)}**")
+                else:
+                    st.warning('Harga Jual 1 tidak ditemukan untuk kode barang ini.')
+                st.caption(f"Kode Barang: {r['KodeBarang']}")
+
+                # Pesan pelanggan: jangan kirim stok internal. Harga selalu dari Harga Jual1 POS.
+                msg = f"{r['Nama']}\nKode: {r['KodeBarang']}\nHarga: {rupiah(harga) if pd.notna(harga) else '-'}"
+                if imgbytes and pd.notna(harga):
+                    share_product_button(
+                        imgbytes,
+                        norm(r['Nama']) + '.jpg',
+                        msg,
+                        key=norm(str(r['KodeBarang']) + r['Nama'])[:40],
+                    )
+                else:
+                    st.link_button('Kirim teks ke WhatsApp', 'https://wa.me/?text=' + urllib.parse.quote(msg), width='stretch')
                 if imgbytes:
-                    st.download_button('Simpan foto untuk WhatsApp', data=imgbytes, file_name=norm(r['Nama']) + '.jpg', mime='image/jpeg', use_container_width=True)
+                    st.download_button('Simpan foto', data=imgbytes, file_name=norm(r['Nama']) + '.jpg', mime='image/jpeg', width='stretch')
 
 else:
     st.title('InMa • AI Kamera Barang')
@@ -378,7 +450,7 @@ else:
         df_brand = products[products['brand_canon'] == brand].copy()
         article_list = [str(x) for x in df_brand['artikel'].dropna().unique() if str(x).strip()]
 
-        if st.button('Cari nama dan harga', type='primary', use_container_width=True):
+        if st.button('Cari nama dan harga', type='primary', width='stretch'):
             if not staff.strip():
                 st.warning('Isi nama staf terlebih dahulu.')
             elif not article_list:
@@ -407,7 +479,7 @@ else:
         for r, score in ranked:
             sm = stock_match(r.get('artikel', ''), brand, df)
             nama = sm['Nama'] if sm is not None else str(r.get('artikel', ''))
-            harga = r.get('harga', '') or (sm['HargaJual1'] if sm is not None else '')
+            harga = (sm['HargaJual1'] if sm is not None and pd.notna(sm.get('HargaJual1')) else '')
             stok = sm['Stok'] if sm is not None else None
             stok_label = f" | stok {stok:g}" if stok is not None else ''
             label = f"{nama} | {rupiah(harga)}{stok_label} | cocok {score:.0f}%"
@@ -429,7 +501,7 @@ else:
                 st.caption(f'Ukuran: {ukuran}')
 
         st.warning('Periksa nama dan harga sebelum menekan simpan. Foto baru disimpan setelah staf mengonfirmasi kandidat yang benar.')
-        if st.button('Konfirmasi dan simpan foto ke Drive', type='primary', use_container_width=True):
+        if st.button('Konfirmasi dan simpan foto ke Drive', type='primary', width='stretch'):
             folder_id = FOLDER_IDS.get(brand)
             if not folder_id:
                 st.error('Folder merek belum dipetakan.')
