@@ -357,7 +357,7 @@ except Exception as e:
     st.stop()
 
 st.sidebar.title('InMa')
-page = st.sidebar.radio('Menu', ['📦 Display Stock', '📷 AI Kamera Barang'])
+page = st.sidebar.radio('Menu', ['📦 Display Stock', '📷 Ajarkan Barang'])
 
 if page == '📦 Display Stock':
     st.title('InMa • Cek Barang Display')
@@ -422,13 +422,9 @@ if page == '📦 Display Stock':
                     st.download_button('Simpan foto', data=imgbytes, file_name=norm(r['Nama']) + '.jpg', mime='image/jpeg', width='stretch')
 
 else:
-    st.title('InMa • AI Kamera Barang')
-    st.caption('Foto barang → AI mencari kandidat → staf konfirmasi → nama dan harga diambil dari database')
-    st.info('Untuk hasil terbaik: pilih merek yang benar dan usahakan kode/label produk ikut terlihat. AI tidak menentukan harga dari foto; harga selalu dibaca dari database InMa.')
-
-    if 'OPENAI_API_KEY' not in st.secrets:
-        st.error('OPENAI_API_KEY belum ada di Streamlit Secrets. Display Stock tetap dapat digunakan, tetapi AI Kamera belum aktif.')
-        st.stop()
+    st.title('InMa • Ajarkan Barang')
+    st.caption('Foto barang asli → staf memilih artikel yang BENAR → foto disimpan sebagai contoh artikel tersebut')
+    st.info('Mode ini tidak menebak artikel. Label berasal dari staf. Foto yang disimpan akan menjadi data contoh untuk sistem pengenalan barang berikutnya.')
 
     try:
         products = load_products()
@@ -443,84 +439,109 @@ else:
 
     staff = st.text_input('Nama staf', placeholder='Contoh: Dodi')
     brand = st.selectbox('Pilih merek', available_brands)
-    photo = st.camera_input('Foto barang', resolution='720p')
 
-    if photo and brand:
-        image_bytes = photo.getvalue()
-        df_brand = products[products['brand_canon'] == brand].copy()
-        article_list = [str(x) for x in df_brand['artikel'].dropna().unique() if str(x).strip()]
+    df_brand = products[products['brand_canon'] == brand].copy()
+    df_brand['artikel'] = df_brand['artikel'].astype(str).str.strip()
+    df_brand = df_brand[df_brand['artikel'] != ''].drop_duplicates('artikel')
 
-        if st.button('Cari nama dan harga', type='primary', width='stretch'):
-            if not staff.strip():
-                st.warning('Isi nama staf terlebih dahulu.')
-            elif not article_list:
-                st.warning('Artikel untuk merek ini belum ada di database produk.')
-            else:
-                with st.spinner('AI membaca foto dan mencocokkan database...'):
-                    try:
-                        ai = analyze_photo(image_bytes, brand, article_list)
-                        ranked = rank_candidates(df_brand, ai)
-                        st.session_state['ai_result'] = ai
-                        st.session_state['ranked'] = [(r.to_dict(), s) for r, s in ranked]
-                        st.session_state['photo_bytes'] = image_bytes
-                        st.session_state['camera_brand'] = brand
-                    except Exception as e:
-                        st.error(f'Identifikasi gagal: {e}')
+    search = st.text_input('Cari artikel yang benar', placeholder='Ketik kode artikel, contoh: 10018 KC')
+    if search.strip():
+        s = search.strip()
+        filtered = df_brand[
+            df_brand['artikel'].str.contains(s, case=False, na=False, regex=False) |
+            df_brand['nama_file'].astype(str).str.contains(s, case=False, na=False, regex=False)
+        ].copy()
+    else:
+        filtered = df_brand.copy()
 
-    if st.session_state.get('ranked') and st.session_state.get('camera_brand') == brand:
-        ai = st.session_state.get('ai_result', {})
-        ranked = st.session_state['ranked']
-        st.caption(f"Keyakinan pembacaan AI: {ai.get('confidence', 0)}%")
-        if ai.get('visible_text'):
-            st.caption('Tulisan terbaca: ' + ', '.join(ai.get('visible_text', [])))
-
-        options = []
+    if filtered.empty:
+        st.warning('Artikel tidak ditemukan untuk merek ini.')
+        selected_row = None
+    else:
+        filtered = filtered.sort_values('artikel').head(300)
+        labels = []
         by_label = {}
-        for r, score in ranked:
-            sm = stock_match(r.get('artikel', ''), brand, df)
-            nama = sm['Nama'] if sm is not None else str(r.get('artikel', ''))
-            harga = (sm['HargaJual1'] if sm is not None and pd.notna(sm.get('HargaJual1')) else '')
+        for _, pr in filtered.iterrows():
+            artikel = str(pr.get('artikel', '')).strip()
+            sm = stock_match(artikel, brand, df)
+            nama = sm['Nama'] if sm is not None else artikel
+            kode = sm['KodeBarang'] if sm is not None else ''
+            harga = sm['HargaJual1'] if sm is not None else ''
             stok = sm['Stok'] if sm is not None else None
-            stok_label = f" | stok {stok:g}" if stok is not None else ''
-            label = f"{nama} | {rupiah(harga)}{stok_label} | cocok {score:.0f}%"
-            options.append(label)
-            by_label[label] = (r, score, sm, nama, harga)
 
-        st.subheader('Pilih barang yang benar')
-        choice = st.radio('Kandidat AI', options, label_visibility='collapsed')
-        r, score, sm, nama, harga = by_label[choice]
+            extra = []
+            if kode:
+                extra.append(f'kode {kode}')
+            if pd.notna(harga) and str(harga).strip():
+                extra.append(rupiah(harga))
+            if stok is not None:
+                extra.append(f'stok {stok:g}')
+            label = artikel + (f" | {' | '.join(extra)}" if extra else '')
+            labels.append(label)
+            by_label[label] = (pr.to_dict(), sm, nama, harga)
 
+        choice = st.selectbox('Pilih artikel yang BENAR', labels)
+        selected_row = by_label.get(choice)
+
+    photo = st.camera_input('Foto barang asli', resolution='720p')
+
+    if selected_row is not None:
+        pr, sm, nama, harga = selected_row
         with st.container(border=True):
             st.markdown(f'### {nama}')
-            st.markdown(f'**Artikel: {r.get("artikel", "-")}**')
-            st.markdown(f'**Harga Jual 1: {rupiah(harga)}**')
+            st.markdown(f'**Artikel: {pr.get("artikel", "-")}**')
             if sm is not None:
+                st.caption(f'Kode Barang POS: {sm["KodeBarang"]}')
+                st.markdown(f'**Harga Jual 1: {rupiah(harga)}**')
                 st.markdown(f'**Stok: {sm["Stok"]:g} pasang**')
-            ukuran = r.get('ukuran', '') or (sm['Ukuran'] if sm is not None else '')
-            if str(ukuran).strip() not in {'','nan','None'}:
-                st.caption(f'Ukuran: {ukuran}')
-
-        st.warning('Periksa nama dan harga sebelum menekan simpan. Foto baru disimpan setelah staf mengonfirmasi kandidat yang benar.')
-        if st.button('Konfirmasi dan simpan foto ke Drive', type='primary', width='stretch'):
-            folder_id = FOLDER_IDS.get(brand)
-            if not folder_id:
-                st.error('Folder merek belum dipetakan.')
             else:
-                safe_article = re.sub(r'[^A-Za-z0-9._-]+', '_', str(r.get('artikel', 'BARANG'))).strip('_')
-                safe_brand = re.sub(r'[^A-Za-z0-9._-]+', '_', brand).strip('_')
-                filename = f'{safe_brand}_{safe_article}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.jpg'
-                try:
-                    f = upload_to_drive(st.session_state['photo_bytes'], folder_id, filename)
-                    append_log([
-                        datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                        staff.strip(), filename, brand, r.get('artikel', ''), nama, harga,
-                        round(float(score), 1), 'DIKONFIRMASI', folder_id, f.get('id', ''), ''
-                    ])
-                    drive_index.clear()
-                    load_products.clear()
-                    st.success('Berhasil. Foto sudah masuk ke folder merek dan aktivitas tercatat di tab Kamera Staff.')
-                    if f.get('webViewLink'):
-                        st.link_button('Buka foto di Drive', f['webViewLink'])
-                    clear_camera_state()
-                except Exception as e:
-                    st.error(f'Gagal menyimpan ke Drive/Google Sheet: {e}')
+                st.caption('Artikel belum berhasil dicocokkan ke stock POS. Foto tetap dapat diajarkan berdasarkan artikel yang dipilih.')
+
+    if photo and selected_row is not None:
+        image_bytes = photo.getvalue()
+        st.success('Foto siap diberi label. Pastikan artikel di atas benar sebelum menyimpan.')
+
+        if st.button('Simpan sebagai contoh artikel ini', type='primary', width='stretch'):
+            if not staff.strip():
+                st.warning('Isi nama staf terlebih dahulu.')
+            else:
+                pr, sm, nama, harga = selected_row
+                folder_id = FOLDER_IDS.get(brand)
+                if not folder_id:
+                    st.error('Folder merek belum dipetakan.')
+                else:
+                    artikel = str(pr.get('artikel', '')).strip()
+                    safe_article = re.sub(r'[^A-Za-z0-9._-]+', '_', artikel or 'BARANG').strip('_')
+                    safe_brand = re.sub(r'[^A-Za-z0-9._-]+', '_', brand).strip('_')
+                    kode = str(sm['KodeBarang']) if sm is not None else ''
+                    safe_code = re.sub(r'[^A-Za-z0-9._-]+', '_', kode).strip('_')
+                    parts = [safe_brand, safe_article]
+                    if safe_code:
+                        parts.append(safe_code)
+                    parts.append(datetime.now().strftime("%Y%m%d_%H%M%S"))
+                    filename = '_'.join(parts) + '.jpg'
+
+                    try:
+                        f = upload_to_drive(image_bytes, folder_id, filename)
+                        append_log([
+                            datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                            staff.strip(),
+                            filename,
+                            brand,
+                            artikel,
+                            nama,
+                            harga if pd.notna(harga) else '',
+                            '',
+                            'DIAJARKAN',
+                            folder_id,
+                            f.get('id', ''),
+                            f'Label diberikan langsung oleh staf. Kode POS: {kode}'
+                        ])
+                        drive_index.clear()
+                        load_products.clear()
+                        st.success(f'Berhasil. Foto ini sekarang tersimpan sebagai contoh untuk artikel {artikel}.')
+                        if f.get('webViewLink'):
+                            st.link_button('Buka foto contoh di Drive', f['webViewLink'])
+                    except Exception as e:
+                        st.error(f'Gagal menyimpan contoh ke Drive/Google Sheet: {e}')
+
