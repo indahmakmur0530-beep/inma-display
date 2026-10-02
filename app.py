@@ -422,7 +422,7 @@ if page == '📦 Display Stock':
                     st.download_button('Simpan foto', data=imgbytes, file_name=norm(r['Nama']) + '.jpg', mime='image/jpeg', width='stretch')
 
 
-else:
+elif page == '📷 Tanya AI':
     st.title('InMa • Tanya AI')
     st.caption('Foto barang → AI mencari artikel → Harga Jual 1 dan stok dibaca dari data POS')
     st.info('AI hanya membantu mengenali artikel. Harga dan stok tidak ditebak AI.')
