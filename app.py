@@ -357,7 +357,7 @@ except Exception as e:
     st.stop()
 
 st.sidebar.title('InMa')
-page = st.sidebar.radio('Menu', ['📦 Display Stock', '📷 Tanya AI', '🎓 Ajarkan Barang'])
+page = st.sidebar.radio('Menu', ['📦 Display Stock', '🔎 Tanya AI', '🎓 Ajarkan Barang'])
 
 if page == '📦 Display Stock':
     st.title('InMa • Cek Barang Display')
@@ -422,10 +422,9 @@ if page == '📦 Display Stock':
                     st.download_button('Simpan foto', data=imgbytes, file_name=norm(r['Nama']) + '.jpg', mime='image/jpeg', width='stretch')
 
 
-elif page == '📷 Tanya AI':
+elif page == '🔎 Tanya AI':
     st.title('InMa • Tanya AI')
-    st.caption('Foto barang → AI mencari artikel → Harga Jual 1 dan stok dibaca dari data POS')
-    st.info('AI hanya membantu mengenali artikel. Harga dan stok tidak ditebak AI.')
+    st.caption('Foto barang → AI mencari kandidat → foto referensi Drive ditampilkan untuk dibandingkan')
 
     if 'OPENAI_API_KEY' not in st.secrets:
         st.error('OPENAI_API_KEY belum ada di Streamlit Secrets.')
@@ -438,50 +437,82 @@ elif page == '📷 Tanya AI':
         st.stop()
 
     available_brands = sorted(set(products['brand_canon'].dropna()) & set(FOLDER_IDS.keys()))
-    staff = st.text_input('Nama staf', placeholder='Contoh: Dodi', key='ask_staff')
+    if not available_brands:
+        st.error('Tidak menemukan merek yang cocok antara database produk dan folder Drive.')
+        st.stop()
+
     brand = st.selectbox('Pilih merek', available_brands, key='ask_brand')
-    photo = st.camera_input('Foto barang yang ingin dikenali', resolution='720p', key='ask_camera')
+    photo = st.camera_input('Foto barang yang ingin dikenali', resolution='720p', key='ask_photo')
 
     if photo and brand:
         image_bytes = photo.getvalue()
         df_brand = products[products['brand_canon'] == brand].copy()
         article_list = [str(x) for x in df_brand['artikel'].dropna().unique() if str(x).strip()]
-        if st.button('Tanya AI: ini artikel apa?', type='primary', width='stretch'):
-            if not staff.strip():
-                st.warning('Isi nama staf terlebih dahulu.')
+
+        if st.button('Cari kandidat', type='primary', width='stretch'):
+            if not article_list:
+                st.warning('Artikel untuk merek ini belum ada di database produk.')
             else:
-                with st.spinner('AI membaca foto dan mencari artikel...'):
+                with st.spinner('AI membaca foto dan mencari kandidat...'):
                     try:
                         ai = analyze_photo(image_bytes, brand, article_list)
                         ranked = rank_candidates(df_brand, ai)
-                        st.session_state['ask_ai_result'] = ai
-                        st.session_state['ask_ranked'] = [(r.to_dict(), sc) for r, sc in ranked]
-                        st.session_state['ask_brand_saved'] = brand
+                        st.session_state['ai_result'] = ai
+                        st.session_state['ranked'] = [(r.to_dict(), s) for r, s in ranked]
+                        st.session_state['photo_bytes'] = image_bytes
+                        st.session_state['camera_brand'] = brand
                     except Exception as e:
                         st.error(f'Identifikasi gagal: {e}')
 
-    if st.session_state.get('ask_ranked') and st.session_state.get('ask_brand_saved') == brand:
-        ai = st.session_state.get('ask_ai_result', {})
-        ranked = st.session_state['ask_ranked']
-        st.subheader('Hasil AI')
+    if st.session_state.get('ranked') and st.session_state.get('camera_brand') == brand:
+        ai = st.session_state.get('ai_result', {})
+        ranked = st.session_state['ranked']
         st.caption(f"Keyakinan AI: {ai.get('confidence', 0)}%")
-        for no, (r, score) in enumerate(ranked, 1):
+        if ai.get('visible_text'):
+            st.caption('Tulisan terbaca: ' + ', '.join(ai.get('visible_text', [])))
+
+        idx = drive_index()
+        st.subheader('Kandidat yang paling mungkin')
+
+        for nomor, (r, score) in enumerate(ranked, start=1):
             sm = stock_match(r.get('artikel', ''), brand, df)
             nama = sm['Nama'] if sm is not None else str(r.get('artikel', ''))
+            harga = sm['HargaJual1'] if sm is not None and pd.notna(sm.get('HargaJual1')) else ''
+            stok = sm['Stok'] if sm is not None else None
+
+            # Prefer the product-sheet file_id; otherwise find the matching reference photo in the brand Drive folder.
+            ref_id = str(r.get('file_id', '') or '').strip()
+            ref_bytes = drive_image(ref_id) if ref_id else None
+            if not ref_bytes and idx:
+                ref_photo = find_photo(nama, brand, idx)
+                if ref_photo:
+                    ref_bytes = drive_image(ref_photo['id'])
+
             with st.container(border=True):
-                st.markdown(f'### {no}. {nama}')
-                st.markdown(f'**Artikel: {r.get("artikel", "-")}**')
-                if sm is not None:
-                    st.markdown(f'**Harga Jual 1: {rupiah(sm["HargaJual1"])}**')
-                    st.markdown(f'**Stok: {sm["Stok"]:g} pasang**')
+                if ref_bytes:
+                    try:
+                        st.image(Image.open(io.BytesIO(ref_bytes)), width='stretch')
+                    except Exception:
+                        st.caption('Foto referensi ditemukan tetapi tidak dapat dibuka.')
                 else:
-                    st.warning('Belum cocok dengan data POS harga/stok.')
+                    st.caption('📷 Foto referensi belum ditemukan di Drive.')
+
+                st.markdown(f'### {nomor}. {nama}')
+                st.markdown(f'**Artikel: {r.get("artikel", "-")}**')
+                if harga != '':
+                    st.markdown(f'**Harga Jual 1: {rupiah(harga)}**')
+                else:
+                    st.markdown('**Harga Jual 1: -**')
+                if stok is not None:
+                    st.markdown(f'**Stok: {stok:g} pasang**')
                 st.caption(f'Kecocokan kandidat: {score:.0f}%')
 
-elif page == '🎓 Ajarkan Barang':
+        st.info('Bandingkan barang yang difoto dengan foto referensi Drive. Hasil AI adalah kandidat, bukan konfirmasi otomatis.')
+
+else:
     st.title('InMa • Ajarkan Barang')
     st.caption('Foto barang asli → staf memilih artikel yang BENAR → foto disimpan sebagai contoh artikel tersebut')
-    st.info('Mode ini tidak menebak artikel. Label berasal dari staf. Foto yang disimpan akan menjadi data contoh untuk sistem pengenalan barang berikutnya.')
+    st.info('Mode ini tidak menebak artikel. Label berasal dari staf dan disimpan sebagai data contoh.')
 
     try:
         products = load_products()
@@ -494,14 +525,14 @@ elif page == '🎓 Ajarkan Barang':
         st.error('Tidak menemukan merek yang cocok antara database produk dan folder Drive.')
         st.stop()
 
-    staff = st.text_input('Nama staf', placeholder='Contoh: Dodi')
-    brand = st.selectbox('Pilih merek', available_brands)
+    staff = st.text_input('Nama staf', placeholder='Contoh: Dodi', key='teach_staff')
+    brand = st.selectbox('Pilih merek', available_brands, key='teach_brand')
 
     df_brand = products[products['brand_canon'] == brand].copy()
     df_brand['artikel'] = df_brand['artikel'].astype(str).str.strip()
     df_brand = df_brand[df_brand['artikel'] != ''].drop_duplicates('artikel')
 
-    search = st.text_input('Cari artikel yang benar', placeholder='Ketik kode artikel, contoh: 10018 KC')
+    search = st.text_input('Cari artikel yang benar', placeholder='Ketik kode artikel', key='teach_search')
     if search.strip():
         s = search.strip()
         filtered = df_brand[
@@ -511,13 +542,12 @@ elif page == '🎓 Ajarkan Barang':
     else:
         filtered = df_brand.copy()
 
+    selected_row = None
     if filtered.empty:
         st.warning('Artikel tidak ditemukan untuk merek ini.')
-        selected_row = None
     else:
         filtered = filtered.sort_values('artikel').head(300)
-        labels = []
-        by_label = {}
+        labels, by_label = [], {}
         for _, pr in filtered.iterrows():
             artikel = str(pr.get('artikel', '')).strip()
             sm = stock_match(artikel, brand, df)
@@ -525,7 +555,6 @@ elif page == '🎓 Ajarkan Barang':
             kode = sm['KodeBarang'] if sm is not None else ''
             harga = sm['HargaJual1'] if sm is not None else ''
             stok = sm['Stok'] if sm is not None else None
-
             extra = []
             if kode:
                 extra.append(f'kode {kode}')
@@ -536,11 +565,10 @@ elif page == '🎓 Ajarkan Barang':
             label = artikel + (f" | {' | '.join(extra)}" if extra else '')
             labels.append(label)
             by_label[label] = (pr.to_dict(), sm, nama, harga)
-
-        choice = st.selectbox('Pilih artikel yang BENAR', labels)
+        choice = st.selectbox('Pilih artikel yang BENAR', labels, key='teach_choice')
         selected_row = by_label.get(choice)
 
-    photo = st.camera_input('Foto barang asli', resolution='720p')
+    photo = st.camera_input('Foto barang asli', resolution='720p', key='teach_photo')
 
     if selected_row is not None:
         pr, sm, nama, harga = selected_row
@@ -551,8 +579,6 @@ elif page == '🎓 Ajarkan Barang':
                 st.caption(f'Kode Barang POS: {sm["KodeBarang"]}')
                 st.markdown(f'**Harga Jual 1: {rupiah(harga)}**')
                 st.markdown(f'**Stok: {sm["Stok"]:g} pasang**')
-            else:
-                st.caption('Artikel belum berhasil dicocokkan ke stock POS. Foto tetap dapat diajarkan berdasarkan artikel yang dipilih.')
 
     if photo and selected_row is not None:
         image_bytes = photo.getvalue()
@@ -577,26 +603,18 @@ elif page == '🎓 Ajarkan Barang':
                         parts.append(safe_code)
                     parts.append(datetime.now().strftime("%Y%m%d_%H%M%S"))
                     filename = '_'.join(parts) + '.jpg'
-
                     try:
                         f = upload_to_drive(image_bytes, folder_id, filename)
                         append_log([
                             datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                            staff.strip(),
-                            filename,
-                            brand,
-                            artikel,
-                            nama,
-                            harga if pd.notna(harga) else '',
-                            '',
-                            'DIAJARKAN',
-                            folder_id,
-                            f.get('id', ''),
+                            staff.strip(), filename, brand, artikel, nama,
+                            harga if pd.notna(harga) else '', '', 'DIAJARKAN',
+                            folder_id, f.get('id', ''),
                             f'Label diberikan langsung oleh staf. Kode POS: {kode}'
                         ])
                         drive_index.clear()
                         load_products.clear()
-                        st.success(f'Berhasil. Foto ini sekarang tersimpan sebagai contoh untuk artikel {artikel}.')
+                        st.success(f'Berhasil. Foto tersimpan sebagai contoh artikel {artikel}.')
                         if f.get('webViewLink'):
                             st.link_button('Buka foto contoh di Drive', f['webViewLink'])
                     except Exception as e:
