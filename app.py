@@ -203,13 +203,13 @@ def drive_index():
             while True:
                 res = drive.files().list(
                     q=f"'{fid}' in parents and trashed=false",
-                    fields='nextPageToken,files(id,name,mimeType)',
+                    fields='nextPageToken,files(id,name,mimeType,createdTime,modifiedTime)',
                     pageSize=1000,
                     pageToken=token,
                 ).execute()
                 for f in res.get('files', []):
                     if f.get('mimeType', '').startswith('image/'):
-                        rows.append({'brand': brand, 'id': f['id'], 'name': f['name'], 'norm': norm(f['name'])})
+                        rows.append({'brand': brand, 'id': f['id'], 'name': f['name'], 'norm': norm(f['name']), 'createdTime': f.get('createdTime', ''), 'modifiedTime': f.get('modifiedTime', '')})
                 token = res.get('nextPageToken')
                 if not token:
                     break
@@ -374,24 +374,37 @@ if page == '📦 Display Stock':
 
     idx = drive_index()
     brands = ['Semua'] + sorted([x for x in df['Merek'].unique() if x != 'LAINNYA']) + (['LAINNYA'] if 'LAINNYA' in set(df['Merek']) else [])
-    c1, c2 = st.columns([1, 1])
+    c1, c2, c3 = st.columns([1, 1, 1])
     with c1:
         selected = st.selectbox('Merek', brands)
     with c2:
         q = st.text_input('Cari artikel', placeholder='Contoh: 650DLB')
+    with c3:
+        sort_by = st.selectbox('Urutkan', ['Terbaru', 'Stok terbanyak'])
 
     view = df.copy()
     if selected != 'Semua':
         view = view[view['Merek'] == selected]
     if q:
         view = view[view['Nama'].str.contains(q, case=False, na=False, regex=False)]
-    view = view.sort_values(['Stok','Nama'], ascending=[False, True])
+
+    # Cari foto sekali di awal agar bisa dipakai untuk urutan "Terbaru" dan saat render.
+    view = view.copy()
+    view['_photo'] = [find_photo(r['Nama'], r['Merek'], idx) if idx else None for _, r in view.iterrows()]
+    view['_photo_created'] = [p.get('createdTime', '') if p else '' for p in view['_photo']]
+    if sort_by == 'Terbaru':
+        # Terbaru = foto produk yang paling baru ditambahkan ke Google Drive.
+        # Barang tanpa foto tetap ditampilkan setelah barang yang memiliki foto.
+        view = view.sort_values(['_photo_created', 'Stok', 'Nama'], ascending=[False, False, True])
+    else:
+        view = view.sort_values(['Stok','Nama'], ascending=[False, True])
+
     st.subheader(f'{len(view):,} barang')
     if not idx:
         st.info('Foto Drive belum aktif pada deployment ini. Periksa Google Drive service-account di Streamlit Secrets.')
 
     for _, r in view.iterrows():
-        photo = find_photo(r['Nama'], r['Merek'], idx) if idx else None
+        photo = r.get('_photo')
         with st.container(border=True):
             a, b = st.columns([1, 1.35])
             with a:
