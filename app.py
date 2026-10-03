@@ -87,7 +87,7 @@ def article_candidates(name):
 
 
 @st.cache_data
-def load_stock(path):
+def load_stock(path, cache_version='brand-verotino-v2'):
     raw = pd.read_excel(path, header=None)
     header = None
     for i in range(min(20, len(raw))):
@@ -349,7 +349,7 @@ def clear_camera_state():
 stock_path = Path(__file__).with_name('stock.xlsx')
 price_path = Path(__file__).with_name('harga.xlsx')
 try:
-    df = load_stock(stock_path)
+    df = load_stock(stock_path, cache_version='brand-verotino-v2')
     prices = load_prices(price_path)
     df = df.merge(prices, on='KodeBarang', how='left')
 except Exception as e:
