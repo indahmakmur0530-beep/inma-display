@@ -23,26 +23,32 @@ BRAND_ALIASES = {
     'DULUX':'DULUX','DLX':'DULUX','DUL':'DULUX','BALANCE':'BALANCE',
     'CQ':'CEQIU','CEQIU':'CEQIU','NAKIS':'NAKIS',
     'GLZ':'GLANZ','GLANZ':'GLANZ','GLANZTON':'GLANZ','GLAZTON':'GLANZ',
-    'GLOWY':'GLOWY','UNIQUE':'UNIQUE','HM':'HONGMING/HM','HONGMING':'HONGMING/HM',
+    'GLOWY':'GLOWY','UNIQUE':'UNIQUE','HM':'HONGMING/HM','HONGMING':'HONGMING/HM','HONGMING/HM':'HONGMING/HM',
     'FEDOR':'FEDOR','BRE':'BRESLIN','BRESLIN':'BRESLIN','PORTO':'PORTO','POR':'PORTO',
-    'VEROTINO':'VERONTINO','VERONTINO':'VERONTINO'
+    'VEROTINO':'VERONTINO','VERONTINO':'VERONTINO',
+    'ATT':'ATT','NEXAS':'NEXAS','HILO\'S':'HILO\'S SAS','HILO\'S SAS':'HILO\'S SAS',
+    'UNKNOWN':'UNKNOWN'
 }
 
 FOLDER_IDS = {
-    'VERONTINO':'1IJWsL_LJ_xPnCayFmtFxon5PD7NCzAa2',
-    'PORTO':'1uB59_lsLuhLmJLR_5cP1Q52TaCZAQKjS',
-    'NAKIS':'1V-egUaCn7bvrravsBP9L0PxIVOgx7fW_',
-    'DULUX':'1tqb0Lay_tZaznacsnpykU23KdczTGwK_',
-    'BALANCE':'1dqeKdCo6ECbez4k_d5X4c7mjObSk-WE8',
-    'GLOWY':'16BE3kx-KslNoXCbxnLauy_BXbgcjr-I0',
-    'UNIQUE':'13J5WF1NztH2oDp6JJEaBVjQFLAdrks37',
-    'HONGMING/HM':'1URq7B3eRnCIompkLjlY9r9mFZh6_ui1q',
-    'FEDOR':'1XEdT1ZGvtH6kVlZKzC-qfz_luQ49IY_n',
-    'CEQIU':'1ao04qXTIQJDen2Q3lAXn2tUI5uCGIIWL',
-    'GLANZ':'1sNXhDMBzwqScCY_ZyzlUEmYG9ezPQtKj',
-    'BRESLIN':'1FJgUKVln3NMRwYM57nYUCV4jOcuY91KL',
+    'NEW ERA':'1JWwh_iArWxyscUshKEAvLw2ApWL1qaYq',
     'HYS ALINA':'1puGj7l1a5bkHjpwDXz0zGIdWvyl3JJcx',
-    'NEW ERA':'1JWwh_iArWxyscUshKEAvLw2ApWL1qaYq'
+    'BRESLIN':'1FJgUKVln3NMRwYM57nYUCV4jOcuY91KL',
+    'NEXAS':'1dmCTE3EmBDuxjVZUi9Whsft5wHXcFTuC',
+    'FEDOR':'1XEdT1ZGvtH6kVlZKzC-qfz_luQ49IY_n',
+    'HONGMING/HM':'1URq7B3eRnCIompkLjlY9r9mFZh6_ui1q',
+    'UNIQUE':'13J5WF1NztH2oDp6JJEaBVjQFLAdrks37',
+    'GLOWY':'16BE3kx-KslNoXCbxnLauy_BXbgcjr-I0',
+    'HILO\'S SAS':'1HILpLHiu27ReL-ImQtYYY9SlVTjjjrR_',
+    'BALANCE':'1dqeKdCo6ECbez4k_d5X4c7mjObSk-WE8',
+    'DULUX':'1tqb0Lay_tZaznacsnpykU23KdczTGwK_',
+    'UNKNOWN':'1fjVDpwHeo-x2CychI7X4J4CeFTFBUn2p',
+    'NAKIS':'1V-egUaCn7bvrravsBP9L0PxIVOgx7fW_',
+    'PORTO':'1uB59_lsLuhLmJLR_5cP1Q52TaCZAQKjS',
+    'VERONTINO':'1IJWsL_LJ_xPnCayFmtFxon5PD7NCzAa2',
+    'CEQIU':'1ao04qXTIQJDen2Q3lAXn2tUI5uCGIIWL',
+    'ATT':'1PU6W_O-89S9Sgm2ZxS9uMl-Bl-GJP3Rb',
+    'GLANZ':'1sNXhDMBzwqScCY_ZyzlUEmYG9ezPQtKj'
 }
 
 
@@ -87,7 +93,7 @@ def article_candidates(name):
 
 
 @st.cache_data
-def load_stock(path, cache_version='brand-verotino-v2'):
+def load_stock(path):
     raw = pd.read_excel(path, header=None)
     header = None
     for i in range(min(20, len(raw))):
@@ -349,7 +355,7 @@ def clear_camera_state():
 stock_path = Path(__file__).with_name('stock.xlsx')
 price_path = Path(__file__).with_name('harga.xlsx')
 try:
-    df = load_stock(stock_path, cache_version='brand-verotino-v2')
+    df = load_stock(stock_path)
     prices = load_prices(price_path)
     df = df.merge(prices, on='KodeBarang', how='left')
 except Exception as e:
